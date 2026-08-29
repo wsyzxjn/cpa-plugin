@@ -65,6 +65,29 @@ type rpcHostHTTPInner struct {
 	Body    []byte              `json:"body,omitempty"`
 }
 
+type rpcHostHTTPResponseWire struct {
+	StatusCode       int                 `json:"status_code"`
+	LegacyStatusCode int                 `json:"StatusCode"`
+	Headers          map[string][]string `json:"headers,omitempty"`
+	Body             []byte              `json:"body,omitempty"`
+}
+
+func decodeHostHTTPResponse(raw []byte) (*hostHTTPResponse, error) {
+	var resp rpcHostHTTPResponseWire
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode host.http.do response: %w", err)
+	}
+	statusCode := resp.StatusCode
+	if statusCode == 0 {
+		statusCode = resp.LegacyStatusCode
+	}
+	return &hostHTTPResponse{
+		StatusCode: statusCode,
+		Headers:    http.Header(resp.Headers),
+		Body:       resp.Body,
+	}, nil
+}
+
 type rpcHostHTTPStreamResponseWire struct {
 	StatusCode int                         `json:"status_code"`
 	Headers    map[string][]string         `json:"headers,omitempty"`
@@ -144,19 +167,7 @@ func hostHTTPDo(req *http.Request) (*hostHTTPResponse, error) {
 	if err != nil {
 		return hostHTTPDoDirect(req, bodyBytes)
 	}
-	var resp struct {
-		StatusCode int                 `json:"status_code"`
-		Headers    map[string][]string `json:"headers,omitempty"`
-		Body       []byte              `json:"body,omitempty"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, fmt.Errorf("decode host.http.do response: %w", err)
-	}
-	return &hostHTTPResponse{
-		StatusCode: resp.StatusCode,
-		Headers:    http.Header(resp.Headers),
-		Body:       resp.Body,
-	}, nil
+	return decodeHostHTTPResponse(result)
 }
 
 // hostHTTPDoDirect executes the request via the plugin's own http.Client.

@@ -1,0 +1,95 @@
+name: WorkBuddy ModelMux compatibility release
+
+on:
+  push:
+    branches:
+      - fix/workbuddy-host-http-status-code
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: workbuddy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workbuddy/go.mod
+          cache-dependency-path: workbuddy/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-24.04
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workbuddy/go.mod
+          cache-dependency-path: workbuddy/go.sum
+      - name: Build and package
+        env:
+          VERSION: 0.8.5-mm.1
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p workbuddy/dist release
+          CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" \
+            go build -trimpath -buildmode=c-shared \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o workbuddy/dist/workbuddy.so ./workbuddy
+          rm -f workbuddy/dist/workbuddy.h
+          ARCHIVE="release/workbuddy_${VERSION}_linux_${GOARCH}.zip"
+          go run ./.github/scripts/package-release.go \
+            -library workbuddy/dist/workbuddy.so \
+            -archive "${ARCHIVE}" \
+            -checksum "${ARCHIVE}.sha256"
+          python3 - "${ARCHIVE}" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              names = archive.namelist()
+          if names != ["workbuddy.so"]:
+              raise SystemExit(f"unexpected archive entries: {names}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workbuddy-${{ matrix.goarch }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: 0.8.5-mm.1
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c *.sha256
+          sha256sum workbuddy_*.zip | sort > checksums.txt
+          gh release create "workbuddy-v${VERSION}" workbuddy_*.zip checksums.txt \
+            --repo "${GH_REPO}" \
+            --target "${GITHUB_SHA}" \
+            --title "WorkBuddy ${VERSION}" \
+            --notes "WorkBuddy 0.8.5 compatibility build. Accepts both StatusCode and status_code from the CLIProxyAPI host.http.do callback."
