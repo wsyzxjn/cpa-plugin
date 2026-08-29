@@ -41,20 +41,21 @@ jobs:
           go-version-file: workbuddy/go.mod
           cache-dependency-path: workbuddy/go.sum
       - name: Build and package
+        working-directory: workbuddy
         env:
           VERSION: 0.8.5-mm.1
           GOARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
-          mkdir -p workbuddy/dist release
+          mkdir -p dist ../release
           CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" \
             go build -trimpath -buildmode=c-shared \
               -ldflags "-s -w -X main.version=${VERSION}" \
-              -o workbuddy/dist/workbuddy.so ./workbuddy
-          rm -f workbuddy/dist/workbuddy.h
-          ARCHIVE="release/workbuddy_${VERSION}_linux_${GOARCH}.zip"
-          go run ./.github/scripts/package-release.go \
-            -library workbuddy/dist/workbuddy.so \
+              -o dist/workbuddy.so .
+          rm -f dist/workbuddy.h
+          ARCHIVE="../release/workbuddy_${VERSION}_linux_${GOARCH}.zip"
+          go run ../.github/scripts/package-release.go \
+            -library dist/workbuddy.so \
             -archive "${ARCHIVE}" \
             -checksum "${ARCHIVE}.sha256"
           python3 - "${ARCHIVE}" <<'PY'
